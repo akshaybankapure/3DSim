@@ -10,17 +10,32 @@ const FloorplanViewer3D: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null)
   const { elements } = useFloorplanStore()
   
-  // Helper: Get bounding box of all elements
+  // Helper: Get bounding box of all elements (walls and doors/windows)
   const getFloorplanBounds = (elements: FloorplanElement[]) => {
     if (elements.length === 0) {
       return { minX: -250, maxX: 250, minY: -250, maxY: 250 }
     }
     let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
     elements.forEach(el => {
-      minX = Math.min(minX, el.start.x, el.end.x)
-      maxX = Math.max(maxX, el.start.x, el.end.x)
-      minY = Math.min(minY, el.start.y, el.end.y)
-      maxY = Math.max(maxY, el.start.y, el.end.y)
+      if (el.type === 'wall' && el.start && el.end) {
+        minX = Math.min(minX, el.start.x, el.end.x)
+        maxX = Math.max(maxX, el.start.x, el.end.x)
+        minY = Math.min(minY, el.start.y, el.end.y)
+        maxY = Math.max(maxY, el.start.y, el.end.y)
+      } else if ((el.type === 'door' || el.type === 'window') && el.parentWallId && typeof el.positionOnWall === 'number') {
+        // Find parent wall
+        const wall = elements.find(w => w.id === el.parentWallId && w.type === 'wall' && w.start && w.end)
+        if (wall && wall.start && wall.end) {
+          const sx = wall.start.x, sy = wall.start.y, ex = wall.end.x, ey = wall.end.y
+          const t = el.positionOnWall
+          const px = sx + (ex - sx) * t
+          const py = sy + (ey - sy) * t
+          minX = Math.min(minX, px)
+          maxX = Math.max(maxX, px)
+          minY = Math.min(minY, py)
+          maxY = Math.max(maxY, py)
+        }
+      }
     })
     return { minX, maxX, minY, maxY }
   }
@@ -92,6 +107,7 @@ const FloorplanViewer3D: React.FC = () => {
     
     // Function to create wall geometry
     const createWallGeometry = (element: FloorplanElement) => {
+      if (!element.start || !element.end) return null
       const { start, end } = element
       const length = Math.sqrt(
         Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2)
@@ -119,55 +135,49 @@ const FloorplanViewer3D: React.FC = () => {
     
     // Function to create door geometry (centered and aligned)
     const createDoorGeometry = (element: FloorplanElement) => {
-      const { start, end } = element
-      const doorWidth = element.properties.width || 80
-      const doorHeight = element.properties.height || 200
-      const wallThickness = 10
-      
+      if (!element.parentWallId || typeof element.positionOnWall !== 'number') return null
+      // Find parent wall
+      const wall = elements.find(w => w.id === element.parentWallId && w.type === 'wall' && w.start && w.end)
+      if (!wall || !wall.start || !wall.end) return null
+      const sx = wall.start.x, sy = wall.start.y, ex = wall.end.x, ey = wall.end.y
+      const t = element.positionOnWall
+      const cx = sx + (ex - sx) * t
+      const cy = sy + (ey - sy) * t
+      const doorWidth = element.width || element.properties.width || 80
+      const doorHeight = element.height || element.properties.height || 200
+      const wallThickness = wall.properties.width || 10
       const geometry = new THREE.BoxGeometry(doorWidth, doorHeight * 0.9, wallThickness * 1.2)
       const material = new THREE.MeshLambertMaterial({ color: 0x8bc34a })
       const door = new THREE.Mesh(geometry, material)
-      
-      // Center door on wall
-      const midX = (start.x + end.x) / 2
-      const midZ = (start.y + end.y) / 2
-      door.position.set(midX, doorHeight * 0.45, midZ)
-      
-      const angle = Math.atan2(end.y - start.y, end.x - start.x)
+      door.position.set(cx, doorHeight * 0.45, cy)
+      const angle = Math.atan2(ey - sy, ex - sx)
       door.rotation.y = angle
-      
       door.castShadow = true
       door.receiveShadow = true
-      
       return door
     }
     
     // Function to create window geometry (centered and aligned)
     const createWindowGeometry = (element: FloorplanElement) => {
-      const { start, end } = element
-      const windowWidth = element.properties.width || 80
-      const windowHeight = element.properties.height || 80
-      const wallThickness = 10
-      
+      if (!element.parentWallId || typeof element.positionOnWall !== 'number') return null
+      // Find parent wall
+      const wall = elements.find(w => w.id === element.parentWallId && w.type === 'wall' && w.start && w.end)
+      if (!wall || !wall.start || !wall.end) return null
+      const sx = wall.start.x, sy = wall.start.y, ex = wall.end.x, ey = wall.end.y
+      const t = element.positionOnWall
+      const cx = sx + (ex - sx) * t
+      const cy = sy + (ey - sy) * t
+      const windowWidth = element.width || element.properties.width || 80
+      const windowHeight = element.height || element.properties.height || 80
+      const wallThickness = wall.properties.width || 10
       const geometry = new THREE.BoxGeometry(windowWidth, windowHeight, wallThickness * 1.1)
-      const material = new THREE.MeshLambertMaterial({ 
-        color: 0x2196f3,
-        transparent: true,
-        opacity: 0.7
-      })
+      const material = new THREE.MeshLambertMaterial({ color: 0x2196f3, transparent: true, opacity: 0.7 })
       const windowMesh = new THREE.Mesh(geometry, material)
-      
-      // Center window on wall, at 2/3 wall height
-      const midX = (start.x + end.x) / 2
-      const midZ = (start.y + end.y) / 2
-      windowMesh.position.set(midX, windowHeight * 0.5 + 60, midZ)
-      
-      const angle = Math.atan2(end.y - start.y, end.x - start.x)
+      windowMesh.position.set(cx, windowHeight * 0.5 + 60, cy)
+      const angle = Math.atan2(ey - sy, ex - sx)
       windowMesh.rotation.y = angle
-      
       windowMesh.castShadow = true
       windowMesh.receiveShadow = true
-      
       return windowMesh
     }
     
@@ -181,7 +191,7 @@ const FloorplanViewer3D: React.FC = () => {
       
       // Add new elements
       elements.forEach(element => {
-        let mesh: THREE.Mesh
+        let mesh: THREE.Mesh | null = null
         
         switch (element.type) {
           case 'wall':
@@ -197,7 +207,7 @@ const FloorplanViewer3D: React.FC = () => {
             return
         }
         
-        scene.add(mesh)
+        if (mesh) scene.add(mesh)
       })
     }
     

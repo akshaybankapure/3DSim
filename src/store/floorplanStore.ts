@@ -12,8 +12,12 @@ export interface Point {
 export interface FloorplanElement {
   id: string
   type: ElementType
-  start: Point
-  end: Point
+  // For walls:
+  start?: Point
+  end?: Point
+  // For doors/windows:
+  parentWallId?: string
+  positionOnWall?: number // 0-1, percentage along wall
   width?: number
   height?: number
   properties: {
