@@ -23,6 +23,7 @@ body {
   position: relative;
   width: 100%;
   height: 100%;
+  overflow: hidden;
 }
 
 .toolbar {
@@ -210,6 +211,16 @@ body {
 /* 3D view specific styles */
 .floorplan-canvas {
   cursor: crosshair;
+  display: block;
+  image-rendering: pixelated;
+  image-rendering: -moz-crisp-edges;
+  image-rendering: crisp-edges;
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100% !important;
+  height: 100% !important;
+  touch-action: none;
 }
 
 /* Corner indicators */

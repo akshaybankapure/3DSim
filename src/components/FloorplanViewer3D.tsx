@@ -3,9 +3,27 @@ import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { useFloorplanStore, FloorplanElement } from '../store/floorplanStore'
 
+const GRID_SIZE = 20 // Match 2D grid size
+const GRID_PADDING = 100 // Padding around the floorplan
+
 const FloorplanViewer3D: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null)
   const { elements } = useFloorplanStore()
+  
+  // Helper: Get bounding box of all elements
+  const getFloorplanBounds = (elements: FloorplanElement[]) => {
+    if (elements.length === 0) {
+      return { minX: -250, maxX: 250, minY: -250, maxY: 250 }
+    }
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
+    elements.forEach(el => {
+      minX = Math.min(minX, el.start.x, el.end.x)
+      maxX = Math.max(maxX, el.start.x, el.end.x)
+      minY = Math.min(minY, el.start.y, el.end.y)
+      maxY = Math.max(maxY, el.start.y, el.end.y)
+    })
+    return { minX, maxX, minY, maxY }
+  }
   
   useEffect(() => {
     if (!containerRef.current) return
@@ -14,6 +32,13 @@ const FloorplanViewer3D: React.FC = () => {
     const scene = new THREE.Scene()
     scene.background = new THREE.Color(0xf0f0f0)
     
+    // Compute bounds and center
+    const bounds = getFloorplanBounds(elements)
+    const width = bounds.maxX - bounds.minX + GRID_PADDING * 2
+    const height = bounds.maxY - bounds.minY + GRID_PADDING * 2
+    const centerX = (bounds.minX + bounds.maxX) / 2
+    const centerY = (bounds.minY + bounds.maxY) / 2
+    
     // Camera setup
     const camera = new THREE.PerspectiveCamera(
       75,
@@ -21,8 +46,9 @@ const FloorplanViewer3D: React.FC = () => {
       0.1,
       10000
     )
-    camera.position.set(0, 100, 100)
-    camera.lookAt(0, 0, 0)
+    // Place camera above and offset, looking at center
+    camera.position.set(centerX, Math.max(width, height), centerY + Math.max(width, height) / 2)
+    camera.lookAt(centerX, 0, centerY)
     
     // Renderer setup
     const renderer = new THREE.WebGLRenderer({ antialias: true })
@@ -35,29 +61,33 @@ const FloorplanViewer3D: React.FC = () => {
     const controls = new OrbitControls(camera, renderer.domElement)
     controls.enableDamping = true
     controls.dampingFactor = 0.05
+    controls.target.set(centerX, 0, centerY)
+    controls.update()
     
     // Lighting
     const ambientLight = new THREE.AmbientLight(0xffffff, 1.2)
     scene.add(ambientLight)
     
     const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8)
-    directionalLight.position.set(50, 100, 50)
+    directionalLight.position.set(centerX + 50, 100, centerY + 50)
     directionalLight.castShadow = true
     directionalLight.shadow.mapSize.width = 2048
     directionalLight.shadow.mapSize.height = 2048
     scene.add(directionalLight)
     
-    // Floor
-    const floorGeometry = new THREE.PlaneGeometry(500, 500)
+    // Floor (match bounds)
+    const floorGeometry = new THREE.PlaneGeometry(width, height)
     const floorMaterial = new THREE.MeshLambertMaterial({ color: 0xf5f5f5 })
     const floor = new THREE.Mesh(floorGeometry, floorMaterial)
     floor.rotation.x = -Math.PI / 2
+    floor.position.set(centerX, 0, centerY)
     floor.receiveShadow = true
     scene.add(floor)
     
-    // Grid helper
-    const gridHelper = new THREE.GridHelper(500, 50, 0x888888, 0xcccccc)
-    gridHelper.position.y = 0.1 // Offset grid above floor to prevent z-fighting
+    // Grid helper (match bounds and grid size)
+    const gridDivisions = Math.ceil(Math.max(width, height) / GRID_SIZE)
+    const gridHelper = new THREE.GridHelper(Math.max(width, height), gridDivisions, 0x888888, 0xcccccc)
+    gridHelper.position.set(centerX, 0.1, centerY) // Offset grid above floor to prevent z-fighting
     scene.add(gridHelper)
     
     // Function to create wall geometry
@@ -90,9 +120,6 @@ const FloorplanViewer3D: React.FC = () => {
     // Function to create door geometry (centered and aligned)
     const createDoorGeometry = (element: FloorplanElement) => {
       const { start, end } = element
-      const wallLength = Math.sqrt(
-        Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2)
-      )
       const doorWidth = element.properties.width || 80
       const doorHeight = element.properties.height || 200
       const wallThickness = 10
@@ -118,9 +145,6 @@ const FloorplanViewer3D: React.FC = () => {
     // Function to create window geometry (centered and aligned)
     const createWindowGeometry = (element: FloorplanElement) => {
       const { start, end } = element
-      const wallLength = Math.sqrt(
-        Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2)
-      )
       const windowWidth = element.properties.width || 80
       const windowHeight = element.properties.height || 80
       const wallThickness = 10
