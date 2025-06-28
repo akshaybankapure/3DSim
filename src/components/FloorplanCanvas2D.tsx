@@ -248,31 +248,44 @@ const FloorplanCanvas2D: React.FC = () => {
     
     // Draw element type indicator
     if (type === 'door') {
-      drawDoor(ctx, start, end, thickness)
+      drawDoor2D(ctx, start, end, thickness)
     } else if (type === 'window') {
-      drawWindow(ctx, start, end, thickness)
+      drawWindow2D(ctx, start, end, thickness)
     }
   }
 
-  // Draw door with thickness consideration
-  const drawDoor = (ctx: CanvasRenderingContext2D, start: Point, end: Point, thickness: number) => {
+  // Draw door as a rectangle centered on the wall
+  const drawDoor2D = (ctx: CanvasRenderingContext2D, start: Point, end: Point, wallThickness: number) => {
+    const doorWidth = 40
+    const doorThickness = wallThickness * 1.5
     const midX = (start.x + end.x) / 2
     const midY = (start.y + end.y) / 2
+    const angle = Math.atan2(end.y - start.y, end.x - start.x)
     
+    ctx.save()
+    ctx.translate(midX, midY)
+    ctx.rotate(angle)
     ctx.fillStyle = '#8bc34a'
-    ctx.beginPath()
-    ctx.arc(midX, midY, Math.max(8, thickness / 2), 0, 2 * Math.PI)
-    ctx.fill()
+    ctx.fillRect(-doorWidth/2, -doorThickness/2, doorWidth, doorThickness)
+    ctx.restore()
   }
 
-  // Draw window with thickness consideration
-  const drawWindow = (ctx: CanvasRenderingContext2D, start: Point, end: Point, thickness: number) => {
+  // Draw window as a rectangle centered on the wall
+  const drawWindow2D = (ctx: CanvasRenderingContext2D, start: Point, end: Point, wallThickness: number) => {
+    const windowWidth = 40
+    const windowThickness = wallThickness * 1.2
     const midX = (start.x + end.x) / 2
     const midY = (start.y + end.y) / 2
-    const size = Math.max(12, thickness)
+    const angle = Math.atan2(end.y - start.y, end.x - start.x)
     
+    ctx.save()
+    ctx.translate(midX, midY)
+    ctx.rotate(angle)
     ctx.fillStyle = '#2196f3'
-    ctx.fillRect(midX - size/2, midY - size/2, size, size)
+    ctx.globalAlpha = 0.7
+    ctx.fillRect(-windowWidth/2, -windowThickness/2, windowWidth, windowThickness)
+    ctx.globalAlpha = 1.0
+    ctx.restore()
   }
 
   // Draw corner indicators

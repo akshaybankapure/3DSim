@@ -37,7 +37,7 @@ const FloorplanViewer3D: React.FC = () => {
     controls.dampingFactor = 0.05
     
     // Lighting
-    const ambientLight = new THREE.AmbientLight(0x404040, 0.6)
+    const ambientLight = new THREE.AmbientLight(0xffffff, 1.2)
     scene.add(ambientLight)
     
     const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8)
@@ -49,7 +49,7 @@ const FloorplanViewer3D: React.FC = () => {
     
     // Floor
     const floorGeometry = new THREE.PlaneGeometry(500, 500)
-    const floorMaterial = new THREE.MeshLambertMaterial({ color: 0xcccccc })
+    const floorMaterial = new THREE.MeshLambertMaterial({ color: 0xf5f5f5 })
     const floor = new THREE.Mesh(floorGeometry, floorMaterial)
     floor.rotation.x = -Math.PI / 2
     floor.receiveShadow = true
@@ -70,7 +70,7 @@ const FloorplanViewer3D: React.FC = () => {
       const width = element.properties.width || 10
       
       const geometry = new THREE.BoxGeometry(length, height, width)
-      const material = new THREE.MeshLambertMaterial({ color: 0x8d6e63 })
+      const material = new THREE.MeshLambertMaterial({ color: 0xbca18c })
       const wall = new THREE.Mesh(geometry, material)
       
       // Position and rotate wall
@@ -87,23 +87,24 @@ const FloorplanViewer3D: React.FC = () => {
       return wall
     }
     
-    // Function to create door geometry
+    // Function to create door geometry (centered and aligned)
     const createDoorGeometry = (element: FloorplanElement) => {
       const { start, end } = element
-      const length = Math.sqrt(
+      const wallLength = Math.sqrt(
         Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2)
       )
-      const height = element.properties.height || 200
-      const width = element.properties.width || 80
+      const doorWidth = element.properties.width || 80
+      const doorHeight = element.properties.height || 200
+      const wallThickness = 10
       
-      const geometry = new THREE.BoxGeometry(length, height, width)
+      const geometry = new THREE.BoxGeometry(doorWidth, doorHeight * 0.9, wallThickness * 1.2)
       const material = new THREE.MeshLambertMaterial({ color: 0x8bc34a })
       const door = new THREE.Mesh(geometry, material)
       
-      // Position and rotate door
+      // Center door on wall
       const midX = (start.x + end.x) / 2
       const midZ = (start.y + end.y) / 2
-      door.position.set(midX, height / 2, midZ)
+      door.position.set(midX, doorHeight * 0.45, midZ)
       
       const angle = Math.atan2(end.y - start.y, end.x - start.x)
       door.rotation.y = angle
@@ -114,35 +115,36 @@ const FloorplanViewer3D: React.FC = () => {
       return door
     }
     
-    // Function to create window geometry
+    // Function to create window geometry (centered and aligned)
     const createWindowGeometry = (element: FloorplanElement) => {
       const { start, end } = element
-      const length = Math.sqrt(
+      const wallLength = Math.sqrt(
         Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2)
       )
-      const height = element.properties.height || 200
-      const width = element.properties.width || 80
+      const windowWidth = element.properties.width || 80
+      const windowHeight = element.properties.height || 80
+      const wallThickness = 10
       
-      const geometry = new THREE.BoxGeometry(length, height, width)
+      const geometry = new THREE.BoxGeometry(windowWidth, windowHeight, wallThickness * 1.1)
       const material = new THREE.MeshLambertMaterial({ 
         color: 0x2196f3,
         transparent: true,
         opacity: 0.7
       })
-      const window = new THREE.Mesh(geometry, material)
+      const windowMesh = new THREE.Mesh(geometry, material)
       
-      // Position and rotate window
+      // Center window on wall, at 2/3 wall height
       const midX = (start.x + end.x) / 2
       const midZ = (start.y + end.y) / 2
-      window.position.set(midX, height / 2, midZ)
+      windowMesh.position.set(midX, windowHeight * 0.5 + 60, midZ)
       
       const angle = Math.atan2(end.y - start.y, end.x - start.x)
-      window.rotation.y = angle
+      windowMesh.rotation.y = angle
       
-      window.castShadow = true
-      window.receiveShadow = true
+      windowMesh.castShadow = true
+      windowMesh.receiveShadow = true
       
-      return window
+      return windowMesh
     }
     
     // Function to update 3D scene
