@@ -29,6 +29,11 @@ const FloorplanCanvas2D: React.FC = () => {
   const [isDraggingElement, setIsDraggingElement] = useState(false)
   const [draggedElementId, setDraggedElementId] = useState<string | null>(null)
   const [dragOffset, setDragOffset] = useState<{ x: number; y: number } | null>(null)
+  
+  // Wall endpoint editing state
+  const [isDraggingEndpoint, setIsDraggingEndpoint] = useState(false)
+  const [draggedEndpoint, setDraggedEndpoint] = useState<'start' | 'end' | null>(null)
+  const [endpointDragOffset, setEndpointDragOffset] = useState<{ x: number; y: number } | null>(null)
 
   // Generate unique ID
   const generateId = () => `element_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
@@ -94,17 +99,28 @@ const FloorplanCanvas2D: React.FC = () => {
     return nearestPoint
   }, [elements])
 
+  // Check if point is near a wall endpoint
+  const isPointNearEndpoint = useCallback((point: Point, endpoint: Point, threshold: number = 8): boolean => {
+    const dist = Math.hypot(point.x - endpoint.x, point.y - endpoint.y)
+    return dist <= threshold
+  }, [])
+
   // Handle mouse down with improved coordinate handling
   const handleMouseDown = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
     if (!activeTool) return
     
     const coords = getCanvasCoordinates(event)
     const snappedCoords = snapToGrid(coords)
-    const nearestEndpoint = findNearestEndpoint(snappedCoords)
     
-    // Use nearest endpoint if found, otherwise use snapped coordinates
-    const startPoint = nearestEndpoint || snappedCoords
-    setDrawingState(true, startPoint)
+    if (activeTool === 'wall') {
+      // For walls: start drawing from snapped point or nearest endpoint
+      const nearestEndpoint = findNearestEndpoint(snappedCoords)
+      const startPoint = nearestEndpoint || snappedCoords
+      setDrawingState(true, startPoint)
+    } else if (activeTool === 'door' || activeTool === 'window') {
+      // For doors/windows: start drawing immediately (single-click placement)
+      setDrawingState(true, snappedCoords)
+    }
   }, [activeTool, getCanvasCoordinates, snapToGrid, findNearestEndpoint, setDrawingState])
 
   // Check if point is near line with improved algorithm
@@ -197,8 +213,8 @@ const FloorplanCanvas2D: React.FC = () => {
     }
   }, [])
 
-  // Draw canvas with improved performance
-  const drawCanvas = useCallback((previewEnd?: Point) => {
+  // Draw canvas with improved performance and door/window preview
+  const drawCanvas = useCallback((previewEnd?: Point, doorWindowPreview?: { wall?: FloorplanElement, positionOnWall?: number, point?: Point }) => {
     const canvas = canvasRef.current
     if (!canvas) return
     const ctx = canvas.getContext('2d')
@@ -211,26 +227,59 @@ const FloorplanCanvas2D: React.FC = () => {
     elements.forEach(element => {
       drawElement(ctx, element, element.id === selectedElement?.id)
     })
-    if (isDrawing && drawingStart && previewEnd && activeTool) {
-      const nearestEndpoint = findNearestEndpoint(previewEnd)
-      if (nearestEndpoint) {
-        ctx.fillStyle = '#007bff'
-        ctx.beginPath()
-        ctx.arc(nearestEndpoint.x, nearestEndpoint.y, 6, 0, 2 * Math.PI)
-        ctx.fill()
-        ctx.strokeStyle = '#ffffff'
+    
+    // Draw preview elements
+    if (isDrawing && drawingStart && activeTool) {
+      if (activeTool === 'wall' && previewEnd) {
+        // Wall drawing preview
+        const nearestEndpoint = findNearestEndpoint(previewEnd)
+        if (nearestEndpoint) {
+          ctx.fillStyle = '#007bff'
+          ctx.beginPath()
+          ctx.arc(nearestEndpoint.x, nearestEndpoint.y, 6, 0, 2 * Math.PI)
+          ctx.fill()
+          ctx.strokeStyle = '#ffffff'
+          ctx.lineWidth = 2
+          ctx.stroke()
+        }
+        ctx.strokeStyle = '#007bff'
         ctx.lineWidth = 2
+        ctx.setLineDash([5, 5])
+        ctx.beginPath()
+        ctx.moveTo(drawingStart.x, drawingStart.y)
+        ctx.lineTo(previewEnd.x, previewEnd.y)
         ctx.stroke()
+        ctx.setLineDash([])
+      } else if ((activeTool === 'door' || activeTool === 'window') && doorWindowPreview?.wall && doorWindowPreview?.positionOnWall !== undefined && doorWindowPreview?.point) {
+        // Door/window placement preview
+        const { wall, positionOnWall, point } = doorWindowPreview
+        if (wall.start && wall.end) {
+          const { start, end } = wall
+          const t = positionOnWall
+          const cx = start.x + (end.x - start.x) * t
+          const cy = start.y + (end.y - start.y) * t
+          const angle = Math.atan2(end.y - start.y, end.x - start.x)
+          const thickness = wall.properties?.width || 10
+          
+          // Draw preview door/window
+          if (activeTool === 'door') {
+            drawDoor2D(ctx, { x: cx, y: cy }, angle, thickness, false)
+          } else {
+            drawWindow2D(ctx, { x: cx, y: cy }, angle, thickness, false)
+          }
+          
+          // Draw placement indicator
+          ctx.fillStyle = '#007bff'
+          ctx.beginPath()
+          ctx.arc(point.x, point.y, 4, 0, 2 * Math.PI)
+          ctx.fill()
+          ctx.strokeStyle = '#ffffff'
+          ctx.lineWidth = 1
+          ctx.stroke()
+        }
       }
-      ctx.strokeStyle = '#007bff'
-      ctx.lineWidth = 2
-      ctx.setLineDash([5, 5])
-      ctx.beginPath()
-      ctx.moveTo(drawingStart.x, drawingStart.y)
-      ctx.lineTo(previewEnd.x, previewEnd.y)
-      ctx.stroke()
-      ctx.setLineDash([])
     }
+    
     drawCornerIndicators(ctx)
     if (!isDrawing && activeTool) {
       const mousePos = getMousePosition()
@@ -247,15 +296,39 @@ const FloorplanCanvas2D: React.FC = () => {
     drawAxes(ctx)
   }, [elements, selectedElement, isDrawing, drawingStart, activeTool, findNearestEndpoint, getMousePosition, snapToGrid, pan, zoom, canvasSize])
 
-  // Handle mouse move for grid snap indicators
+  // Handle mouse move for grid snap indicators and drawing preview
   const handleMouseMoveGlobal = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
     // Handle drawing preview
     if (isDrawing && drawingStart && activeTool) {
       const coords = getCanvasCoordinates(event)
       const snappedCoords = snapToGrid(coords)
-      const nearestEndpoint = findNearestEndpoint(snappedCoords)
-      const endPoint = nearestEndpoint || snappedCoords
-      drawCanvas(endPoint)
+      
+      if (activeTool === 'wall') {
+        // Wall drawing preview
+        const nearestEndpoint = findNearestEndpoint(snappedCoords)
+        const endPoint = nearestEndpoint || snappedCoords
+        drawCanvas(endPoint)
+      } else if (activeTool === 'door' || activeTool === 'window') {
+        // Door/window placement preview
+        const elementsList: FloorplanElement[] = elements;
+        let nearestWall: FloorplanElement | undefined = undefined;
+        let minDist = 30;
+        let bestT: number | undefined = undefined;
+        let bestPoint: Point | undefined = undefined;
+        elementsList.forEach((el) => {
+          if (el.type === 'wall' && el.start && el.end && typeof el.id === 'string') {
+            const { positionOnWall, closestPoint } = projectPointToWall(snappedCoords, el);
+            const dist = Math.hypot(snappedCoords.x - closestPoint.x, snappedCoords.y - closestPoint.y);
+            if (dist < minDist) {
+              minDist = dist;
+              nearestWall = el;
+              bestT = positionOnWall;
+              bestPoint = closestPoint;
+            }
+          }
+        });
+        drawCanvas(undefined, { wall: nearestWall, positionOnWall: bestT, point: bestPoint })
+      }
     }
     
     // Handle grid snap indicators when not drawing
@@ -264,7 +337,7 @@ const FloorplanCanvas2D: React.FC = () => {
       setMousePosition(coords)
       drawCanvas()
     }
-  }, [isDrawing, drawingStart, activeTool, getCanvasCoordinates, snapToGrid, findNearestEndpoint, drawCanvas])
+  }, [isDrawing, drawingStart, activeTool, getCanvasCoordinates, snapToGrid, findNearestEndpoint, drawCanvas, elements])
 
   // Helper: get wall by id (with type guard)
   const getWallById = (id: string): FloorplanElement | undefined => {
@@ -313,66 +386,113 @@ const FloorplanCanvas2D: React.FC = () => {
       setDrawingState(false)
       return
     }
-    // For door/window: find nearest wall
-    const elementsList: FloorplanElement[] = elements;
-    let nearestWall: FloorplanElement | undefined = undefined;
-    let minDist = 30;
-    let bestT: number | undefined = undefined;
-    let bestPoint: Point | undefined = undefined;
-    elementsList.forEach((el) => {
-      if (el.type === 'wall' && el.start && el.end && typeof el.id === 'string') {
-        const { positionOnWall, closestPoint } = projectPointToWall(coords, el);
-        const dist = Math.hypot(coords.x - closestPoint.x, coords.y - closestPoint.y);
-        if (dist < minDist) {
-          minDist = dist;
-          nearestWall = el;
-          bestT = positionOnWall;
-          bestPoint = closestPoint;
+    // For door/window: single-click placement on nearest wall
+    if (activeTool === 'door' || activeTool === 'window') {
+      const elementsList: FloorplanElement[] = elements;
+      let nearestWall: FloorplanElement | undefined = undefined;
+      let minDist = 30;
+      let bestT: number | undefined = undefined;
+      let bestPoint: Point | undefined = undefined;
+      elementsList.forEach((el) => {
+        if (el.type === 'wall' && el.start && el.end && typeof el.id === 'string') {
+          const { positionOnWall, closestPoint } = projectPointToWall(coords, el);
+          const dist = Math.hypot(coords.x - closestPoint.x, coords.y - closestPoint.y);
+          if (dist < minDist) {
+            minDist = dist;
+            nearestWall = el;
+            bestT = positionOnWall;
+            bestPoint = closestPoint;
+          }
+        }
+      });
+      if (!nearestWall || bestT === undefined) {
+        setDrawingState(false);
+        return; // Only allow placement on a wall
+      }
+      const wallForDoor: FloorplanElement = nearestWall;
+      const newElement: FloorplanElement = {
+        id: generateId(),
+        type: activeTool,
+        parentWallId: wallForDoor.id,
+        positionOnWall: bestT,
+        width: 80,
+        height: 200,
+        properties: {
+          width: 80,
+          height: 200
         }
       }
-    });
-    if (!nearestWall || bestT === undefined) {
-      setDrawingState(false);
-      return; // Only allow placement on a wall
+      addElement(newElement)
+      setDrawingState(false)
     }
-    const wallForDoor: FloorplanElement = nearestWall;
-    const newElement: FloorplanElement = {
-      id: generateId(),
-      type: activeTool,
-      parentWallId: wallForDoor.id,
-      positionOnWall: bestT,
-      width: 80,
-      height: 200,
-      properties: {
-        width: 80,
-        height: 200
-      }
-    }
-    addElement(newElement)
-    setDrawingState(false)
   }, [isDrawing, drawingStart, activeTool, getCanvasCoordinates, snapToGrid, findNearestEndpoint, addElement, setDrawingState, elements])
 
-  // Handle click for selection
-  const handleClick = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
-    if (activeTool) return // Don't select when drawing
-    
-    const coords = getCanvasCoordinates(event)
-    const clickedElement = findElementAtPoint(coords)
-    selectElement(clickedElement)
-  }, [activeTool, getCanvasCoordinates, selectElement])
-
-  // Find element at point with improved wall thickness consideration
+  // Find element at point with improved wall thickness consideration and door/window support
   const findElementAtPoint = useCallback((point: Point): FloorplanElement | null => {
-    for (const element of elements) {
+    console.log('Searching for element at point:', point)
+    
+    // Check doors and windows first (they should be on top)
+    for (let i = elements.length - 1; i >= 0; i--) {
+      const element = elements[i]
+      if ((element.type === 'door' || element.type === 'window') && 
+          element.parentWallId && typeof element.positionOnWall === 'number') {
+        
+        const wall = getWallById(element.parentWallId)
+        if (!wall || !wall.start || !wall.end) continue
+        
+        // Calculate door/window position
+        const { start, end } = wall
+        const t = element.positionOnWall
+        const cx = start.x + (end.x - start.x) * t
+        const cy = start.y + (end.y - start.y) * t
+        
+        // Check if point is near door/window center
+        const doorWidth = element.width || element.properties.width || 80
+        const threshold = doorWidth / 2 + 8 // Increased padding for easier selection
+        const dist = Math.hypot(point.x - cx, point.y - cy)
+        
+        console.log(`${element.type} ${element.id} at (${cx.toFixed(1)}, ${cy.toFixed(1)}), distance: ${dist.toFixed(1)}, threshold: ${threshold}`)
+        
+        if (dist <= threshold) {
+          console.log('Found', element.type, ':', element.id)
+          return element
+        }
+      }
+    }
+    
+    // Check walls (reverse order for top-most selection)
+    for (let i = elements.length - 1; i >= 0; i--) {
+      const element = elements[i]
       if (element.type !== 'wall' || !element.start || !element.end) continue
+      
       const thickness = element.properties.width || 10
       const threshold = Math.max(thickness / 2, 8)
+      
       if (isPointNearLine(point, element.start, element.end, threshold)) {
+        console.log('Found wall:', element.id, 'at distance threshold:', threshold)
         return element
       }
     }
+    
+    console.log('No element found at point')
     return null
-  }, [elements])
+  }, [elements, getWallById, isPointNearLine])
+
+  // Handle click for selection with improved debugging
+  const handleClick = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
+    if (activeTool) {
+      console.log('Click ignored - active tool:', activeTool)
+      return // Don't select when drawing
+    }
+    
+    const coords = getCanvasCoordinates(event)
+    console.log('Click at canvas coordinates:', coords)
+    
+    const clickedElement = findElementAtPoint(coords)
+    console.log('Found element:', clickedElement?.type, clickedElement?.id)
+    
+    selectElement(clickedElement)
+  }, [activeTool, getCanvasCoordinates, selectElement, findElementAtPoint])
 
   // Draw grid with improved visual clarity (infinite grid)
   const drawGrid = (ctx: CanvasRenderingContext2D, width: number, height: number) => {
@@ -414,7 +534,7 @@ const FloorplanCanvas2D: React.FC = () => {
     }
   }
 
-  // Draw element with thickness
+  // Draw element with thickness and selection indicators
   const drawElement = (ctx: CanvasRenderingContext2D, element: FloorplanElement, isSelected: boolean) => {
     if (element.type === 'wall') {
       if (!element.start || !element.end) return;
@@ -426,6 +546,21 @@ const FloorplanCanvas2D: React.FC = () => {
       ctx.moveTo(start.x, start.y)
       ctx.lineTo(end.x, end.y)
       ctx.stroke()
+      
+      // Draw selection indicator for walls
+      if (isSelected) {
+        ctx.strokeStyle = '#ff0000'
+        ctx.lineWidth = 2
+        ctx.setLineDash([5, 5])
+        ctx.beginPath()
+        ctx.moveTo(start.x, start.y)
+        ctx.lineTo(end.x, end.y)
+        ctx.stroke()
+        ctx.setLineDash([])
+        
+        // Draw endpoint handles
+        drawWallEndpointHandles(ctx, start, end)
+      }
       return
     }
     // For door/window: compute position from parent wall
@@ -446,7 +581,36 @@ const FloorplanCanvas2D: React.FC = () => {
     }
   }
 
-  // Draw door as a rectangle centered on the wall
+  // Draw wall endpoint handles
+  const drawWallEndpointHandles = (ctx: CanvasRenderingContext2D, start: Point, end: Point) => {
+    const handleSize = 8
+    const handleColor = '#007bff'
+    const handleBorderColor = '#ffffff'
+    
+    // Start endpoint handle
+    ctx.fillStyle = handleColor
+    ctx.strokeStyle = handleBorderColor
+    ctx.lineWidth = 2
+    ctx.beginPath()
+    ctx.arc(start.x, start.y, handleSize, 0, 2 * Math.PI)
+    ctx.fill()
+    ctx.stroke()
+    
+    // End endpoint handle
+    ctx.beginPath()
+    ctx.arc(end.x, end.y, handleSize, 0, 2 * Math.PI)
+    ctx.fill()
+    ctx.stroke()
+    
+    // Add labels for clarity
+    ctx.fillStyle = '#007bff'
+    ctx.font = 'bold 12px sans-serif'
+    ctx.textAlign = 'center'
+    ctx.fillText('S', start.x, start.y - handleSize - 5)
+    ctx.fillText('E', end.x, end.y - handleSize - 5)
+  }
+
+  // Draw door as a rectangle centered on the wall with selection indicator
   const drawDoor2D = (ctx: CanvasRenderingContext2D, center: Point, angle: number, wallThickness: number, isSelected: boolean) => {
     const doorWidth = 40
     const doorThickness = wallThickness * 1.5
@@ -455,10 +619,27 @@ const FloorplanCanvas2D: React.FC = () => {
     ctx.rotate(angle)
     ctx.fillStyle = isSelected ? '#ffb74d' : '#8bc34a'
     ctx.fillRect(-doorWidth/2, -doorThickness/2, doorWidth, doorThickness)
+    
+    // Draw selection border
+    if (isSelected) {
+      ctx.strokeStyle = '#ff0000'
+      ctx.lineWidth = 2
+      ctx.strokeRect(-doorWidth/2, -doorThickness/2, doorWidth, doorThickness)
+      
+      // Draw center handle for dragging
+      ctx.fillStyle = '#007bff'
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.arc(0, 0, 6, 0, 2 * Math.PI)
+      ctx.fill()
+      ctx.stroke()
+    }
+    
     ctx.restore()
   }
 
-  // Draw window as a rectangle centered on the wall
+  // Draw window as a rectangle centered on the wall with selection indicator
   const drawWindow2D = (ctx: CanvasRenderingContext2D, center: Point, angle: number, wallThickness: number, isSelected: boolean) => {
     const windowWidth = 40
     const windowThickness = wallThickness * 1.2
@@ -469,6 +650,23 @@ const FloorplanCanvas2D: React.FC = () => {
     ctx.globalAlpha = 0.7
     ctx.fillRect(-windowWidth/2, -windowThickness/2, windowWidth, windowThickness)
     ctx.globalAlpha = 1.0
+    
+    // Draw selection border
+    if (isSelected) {
+      ctx.strokeStyle = '#ff0000'
+      ctx.lineWidth = 2
+      ctx.strokeRect(-windowWidth/2, -windowThickness/2, windowWidth, windowThickness)
+      
+      // Draw center handle for dragging
+      ctx.fillStyle = '#007bff'
+      ctx.strokeStyle = '#ffffff'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.arc(0, 0, 6, 0, 2 * Math.PI)
+      ctx.fill()
+      ctx.stroke()
+    }
+    
     ctx.restore()
   }
 
@@ -582,39 +780,114 @@ const FloorplanCanvas2D: React.FC = () => {
     }
   }, [])
 
-  // Start dragging selected element
+  // Start dragging selected element or endpoint
   const handleMouseDownDrag = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
     if (!selectedElement || activeTool) return
-    if (selectedElement.type !== 'wall' || !selectedElement.start || !selectedElement.end || !selectedElement.id) return
+    
     const coords = getCanvasCoordinates(event)
-    const threshold = Math.max(selectedElement.properties.width || 10, 10)
-    if (isPointNearLine(coords, selectedElement.start, selectedElement.end, threshold)) {
-      setIsDraggingElement(true)
-      setDraggedElementId(selectedElement.id)
-      setDragOffset({ x: coords.x - selectedElement.start.x, y: coords.y - selectedElement.start.y })
+    
+    if (selectedElement.type === 'wall' && selectedElement.start && selectedElement.end && selectedElement.id) {
+      // Check if clicking on wall endpoints first
+      if (isPointNearEndpoint(coords, selectedElement.start, 8)) {
+        setIsDraggingEndpoint(true)
+        setDraggedEndpoint('start')
+        setEndpointDragOffset({ x: coords.x - selectedElement.start.x, y: coords.y - selectedElement.start.y })
+        return
+      }
+      if (isPointNearEndpoint(coords, selectedElement.end, 8)) {
+        setIsDraggingEndpoint(true)
+        setDraggedEndpoint('end')
+        setEndpointDragOffset({ x: coords.x - selectedElement.end.x, y: coords.y - selectedElement.end.y })
+        return
+      }
+      
+      // Wall dragging
+      const threshold = Math.max(selectedElement.properties.width || 10, 10)
+      if (isPointNearLine(coords, selectedElement.start, selectedElement.end, threshold)) {
+        setIsDraggingElement(true)
+        setDraggedElementId(selectedElement.id)
+        setDragOffset({ x: coords.x - selectedElement.start.x, y: coords.y - selectedElement.start.y })
+      }
+    } else if ((selectedElement.type === 'door' || selectedElement.type === 'window') && 
+               selectedElement.parentWallId && typeof selectedElement.positionOnWall === 'number') {
+      // Door/window dragging
+      const wall = getWallById(selectedElement.parentWallId)
+      if (!wall || !wall.start || !wall.end) return
+      
+      // Calculate door/window center
+      const { start, end } = wall
+      const t = selectedElement.positionOnWall
+      const cx = start.x + (end.x - start.x) * t
+      const cy = start.y + (end.y - start.y) * t
+      
+      // Check if click is near door/window center
+      const doorWidth = selectedElement.width || selectedElement.properties.width || 80
+      const threshold = doorWidth / 2 + 5
+      const dist = Math.hypot(coords.x - cx, coords.y - cy)
+      
+      if (dist <= threshold) {
+        setIsDraggingElement(true)
+        setDraggedElementId(selectedElement.id)
+        // For doors/windows, we don't need drag offset since we'll project to wall
+        setDragOffset(null)
+      }
     }
-  }, [selectedElement, activeTool, getCanvasCoordinates, isPointNearLine])
+  }, [selectedElement, activeTool, getCanvasCoordinates, isPointNearLine, getWallById, isPointNearEndpoint])
 
-  // Drag selected element
+  // Drag selected element or endpoint
   const handleMouseMoveDrag = useCallback((event: React.MouseEvent<HTMLCanvasElement>) => {
-    if (!isDraggingElement || !selectedElement || !dragOffset) return
-    if (selectedElement.type !== 'wall' || !selectedElement.start || !selectedElement.end || !selectedElement.id) return
+    if (!selectedElement || !selectedElement.id) return
+    
     const coords = getCanvasCoordinates(event)
-    let newStart = { x: coords.x - dragOffset.x, y: coords.y - dragOffset.y }
-    newStart = snapToGrid(newStart)
-    const nearest = findNearestEndpoint(newStart, 15)
-    if (nearest) newStart = nearest
-    const dx = newStart.x - selectedElement.start.x
-    const dy = newStart.y - selectedElement.start.y
-    const newEnd = { x: selectedElement.end.x + dx, y: selectedElement.end.y + dy }
-    updateElement(selectedElement.id, { start: newStart, end: newEnd })
-  }, [isDraggingElement, selectedElement, dragOffset, getCanvasCoordinates, snapToGrid, findNearestEndpoint, updateElement])
+    
+    if (isDraggingEndpoint && draggedEndpoint && endpointDragOffset && selectedElement.start && selectedElement.end) {
+      // Dragging wall endpoint
+      let newPoint = { x: coords.x - endpointDragOffset.x, y: coords.y - endpointDragOffset.y }
+      newPoint = snapToGrid(newPoint)
+      const nearest = findNearestEndpoint(newPoint, 15)
+      if (nearest) newPoint = nearest
+      
+      if (draggedEndpoint === 'start') {
+        updateElement(selectedElement.id, { start: newPoint })
+      } else {
+        updateElement(selectedElement.id, { end: newPoint })
+      }
+    } else if (isDraggingElement) {
+      if (selectedElement.type === 'wall' && selectedElement.start && selectedElement.end && dragOffset) {
+        // Wall dragging
+        let newStart = { x: coords.x - dragOffset.x, y: coords.y - dragOffset.y }
+        newStart = snapToGrid(newStart)
+        const nearest = findNearestEndpoint(newStart, 15)
+        if (nearest) newStart = nearest
+        const dx = newStart.x - selectedElement.start.x
+        const dy = newStart.y - selectedElement.start.y
+        const newEnd = { x: selectedElement.end.x + dx, y: selectedElement.end.y + dy }
+        updateElement(selectedElement.id, { start: newStart, end: newEnd })
+      } else if ((selectedElement.type === 'door' || selectedElement.type === 'window') && 
+                 selectedElement.parentWallId && typeof selectedElement.positionOnWall === 'number') {
+        // Door/window dragging along parent wall
+        const wall = getWallById(selectedElement.parentWallId)
+        if (!wall || !wall.start || !wall.end) return
+        
+        // Project mouse position onto wall
+        const { positionOnWall } = projectPointToWall(coords, wall)
+        
+        // Constrain to wall bounds (0-1) with some padding to prevent edge placement
+        const constrainedPosition = Math.max(0.05, Math.min(0.95, positionOnWall))
+        
+        updateElement(selectedElement.id, { positionOnWall: constrainedPosition })
+      }
+    }
+  }, [isDraggingElement, isDraggingEndpoint, draggedEndpoint, endpointDragOffset, selectedElement, dragOffset, getCanvasCoordinates, snapToGrid, findNearestEndpoint, updateElement, getWallById, projectPointToWall])
 
   // Stop dragging
   const handleMouseUpDrag = useCallback(() => {
     setIsDraggingElement(false)
     setDraggedElementId(null)
     setDragOffset(null)
+    setIsDraggingEndpoint(false)
+    setDraggedEndpoint(null)
+    setEndpointDragOffset(null)
   }, [])
 
   // Attach native wheel event listener in useEffect

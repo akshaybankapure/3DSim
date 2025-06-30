@@ -2,6 +2,9 @@ import React, { useRef, useEffect } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
 import { useFloorplanStore, FloorplanElement } from '../store/floorplanStore'
+import { WallGraph } from '../utils/wall-graph'
+import { WallMeshBuilder } from '../utils/wall-mesh-builder'
+import { computeSharedCorner } from '../utils/wall-geometry-utils'
 
 const GRID_SIZE = 20 // Match 2D grid size
 const GRID_PADDING = 100 // Padding around the floorplan
@@ -42,6 +45,19 @@ const FloorplanViewer3D: React.FC = () => {
   
   useEffect(() => {
     if (!containerRef.current) return
+    
+    console.log(`=== 3D Viewer useEffect triggered ===`);
+    console.log(`Elements array length: ${elements.length}`);
+    console.log(`Elements IDs:`, elements.map(el => el.id));
+    
+    // Check for duplicate elements
+    const elementIds = elements.map(el => el.id);
+    const uniqueIds = new Set(elementIds);
+    if (elementIds.length !== uniqueIds.size) {
+      console.warn(`WARNING: Duplicate elements detected! ${elementIds.length} total, ${uniqueIds.size} unique`);
+      const duplicates = elementIds.filter((id, index) => elementIds.indexOf(id) !== index);
+      console.warn(`Duplicate IDs:`, duplicates);
+    }
     
     // Scene setup
     const scene = new THREE.Scene()
@@ -105,34 +121,6 @@ const FloorplanViewer3D: React.FC = () => {
     gridHelper.position.set(centerX, 0.1, centerY) // Offset grid above floor to prevent z-fighting
     scene.add(gridHelper)
     
-    // Function to create wall geometry
-    const createWallGeometry = (element: FloorplanElement) => {
-      if (!element.start || !element.end) return null
-      const { start, end } = element
-      const length = Math.sqrt(
-        Math.pow(end.x - start.x, 2) + Math.pow(end.y - start.y, 2)
-      )
-      const height = element.properties.height || 200
-      const width = element.properties.width || 10
-      
-      const geometry = new THREE.BoxGeometry(length, height, width)
-      const material = new THREE.MeshLambertMaterial({ color: 0xbca18c })
-      const wall = new THREE.Mesh(geometry, material)
-      
-      // Position and rotate wall
-      const midX = (start.x + end.x) / 2
-      const midZ = (start.y + end.y) / 2
-      wall.position.set(midX, height / 2, midZ)
-      
-      const angle = Math.atan2(end.y - start.y, end.x - start.x)
-      wall.rotation.y = angle
-      
-      wall.castShadow = true
-      wall.receiveShadow = true
-      
-      return wall
-    }
-    
     // Function to create door geometry (centered and aligned)
     const createDoorGeometry = (element: FloorplanElement) => {
       if (!element.parentWallId || typeof element.positionOnWall !== 'number') return null
@@ -183,20 +171,59 @@ const FloorplanViewer3D: React.FC = () => {
     
     // Function to update 3D scene
     const updateScene = () => {
+      console.log(`Scene update: ${scene.children.length} objects before cleanup`);
+      
       // Remove existing elements
-      scene.children = scene.children.filter((child: THREE.Object3D) => 
+      const objectsToKeep = scene.children.filter((child: THREE.Object3D) => 
         child === floor || child === gridHelper || 
         child === ambientLight || child === directionalLight
       )
       
-      // Add new elements
+      console.log(`Keeping ${objectsToKeep.length} objects (floor, grid, lights), removing ${scene.children.length - objectsToKeep.length} objects`);
+      
+      scene.children = objectsToKeep;
+      
+      console.log(`Scene after cleanup: ${scene.children.length} objects`);
+      
+      // --- Professional Wall Engine with Shared-Corner Mitering ---
+      // Build wall graph and compute shared corners (recalculate each time)
+      console.log(`Processing ${elements.length} total elements`)
+      const wallElements = elements.filter(el => el.type === 'wall')
+      console.log(`Found ${wallElements.length} wall elements:`, wallElements.map(w => ({ id: w.id, start: w.start, end: w.end })))
+      
+      const wallGraph = new WallGraph(elements)
+      const sharedCorners = new Map<string, { x: number; y: number }>()
+      
+      // Compute shared corner points for each node
+      for (const [nodeKey, node] of wallGraph.nodes.entries()) {
+        const sharedCorner = computeSharedCorner(node, node.edges)
+        sharedCorners.set(nodeKey, sharedCorner)
+        
+        // Debug: Log corner computation
+        console.log(`Node ${nodeKey}: Original (${node.x.toFixed(1)}, ${node.y.toFixed(1)}) -> Shared (${sharedCorner.x.toFixed(1)}, ${sharedCorner.y.toFixed(1)})`)
+      }
+      
+      // Create wall mesh builder
+      const wallMeshBuilder = new WallMeshBuilder(wallGraph)
+      
+      // Debug: Log wall graph info
+      console.log(`Wall Graph: ${wallGraph.nodes.size} nodes, ${wallGraph.edges.size} edges`)
+      console.log(`Wall Edges:`, Array.from(wallGraph.edges.values()).map(e => ({ id: e.id, start: `${e.start.x},${e.start.y}`, end: `${e.end.x},${e.end.y}` })))
+      console.log(`Shared Corners: ${sharedCorners.size} computed corner points`)
+      
+      // Add walls using professional wall engine
+      const wallMeshes = wallMeshBuilder.buildAllMeshes(sharedCorners)
+      console.log(`Created ${wallMeshes.length} wall mesh(es)`)
+      wallMeshes.forEach((mesh, index) => {
+        console.log(`Adding wall mesh ${index}:`, mesh)
+        scene.add(mesh)
+      })
+      
+      // Add doors and windows
       elements.forEach(element => {
         let mesh: THREE.Mesh | null = null
         
         switch (element.type) {
-          case 'wall':
-            mesh = createWallGeometry(element)
-            break
           case 'door':
             mesh = createDoorGeometry(element)
             break
@@ -209,6 +236,8 @@ const FloorplanViewer3D: React.FC = () => {
         
         if (mesh) scene.add(mesh)
       })
+      
+      console.log(`Scene after adding elements: ${scene.children.length} objects`);
     }
     
     // Animation loop
