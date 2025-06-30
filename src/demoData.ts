@@ -47,35 +47,43 @@ export const demoFloorplan: FloorplanElement[] = [
     properties: { width: 10, height: 200 }
   },
   
-  // Doors
+  // Doors - positioned along walls using parentWallId and positionOnWall
   {
     id: 'door_1',
     type: 'door',
-    start: { x: 250, y: 100 },
-    end: { x: 250, y: 100 },
+    parentWallId: 'wall_1', // Top wall (100,100) to (400,100)
+    positionOnWall: 0.5, // Middle of the wall (250,100)
+    width: 80,
+    height: 200,
     properties: { width: 80, height: 200 }
   },
   {
     id: 'door_2',
     type: 'door',
-    start: { x: 200, y: 200 },
-    end: { x: 200, y: 200 },
+    parentWallId: 'wall_5', // Interior wall (100,200) to (300,200)
+    positionOnWall: 0.5, // Middle of the wall (200,200)
+    width: 80,
+    height: 200,
     properties: { width: 80, height: 200 }
   },
   
-  // Windows
+  // Windows - positioned along walls using parentWallId and positionOnWall
   {
     id: 'window_1',
     type: 'window',
-    start: { x: 150, y: 100 },
-    end: { x: 150, y: 100 },
-    properties: { width: 80, height: 200 }
+    parentWallId: 'wall_1', // Top wall (100,100) to (400,100)
+    positionOnWall: 0.167, // About 1/6 from start (150,100)
+    width: 80,
+    height: 80,
+    properties: { width: 80, height: 80 }
   },
   {
     id: 'window_2',
     type: 'window',
-    start: { x: 350, y: 300 },
-    end: { x: 350, y: 300 },
-    properties: { width: 80, height: 200 }
+    parentWallId: 'wall_3', // Bottom wall (400,300) to (100,300)
+    positionOnWall: 0.167, // About 1/6 from start (350,300)
+    width: 80,
+    height: 80,
+    properties: { width: 80, height: 80 }
   }
 ] 
